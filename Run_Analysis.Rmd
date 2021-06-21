@@ -1,0 +1,1136 @@
+---
+title: 'Weiskirchen - Borkham-Kamphorst: ILCN2-KO and CCL4 induces Fibrosis in a Mouse Model - 3mRNA-Seq'
+author:
+- affiliation: Interdisciplinary Center for Clinical Research - RWTH-Aachen
+  name: Ali T. Abdallah
+  fontsize: 15pt
+date: "14.06.2021"
+output: 
+  html_notebook:
+    highlight: kate
+    theme: paper
+---
+
+<style>
+.main-container{
+  min-width: 1800px;!important
+  margin-left: auto;!important
+  margin-right: auto;!important
+  font-size: 15px;!important
+}
+.tabset{
+  font-size: 15px;!important
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  border: 1px solid black;
+}
+tr.sub th {
+    border-top-width: 1px;
+    border-top-style: solid;
+    border-top-color: #8ebffc;
+    font-weight: normal;
+    color: #333333;
+}
+.download{
+	padding: 10px 15px;
+	background: #4479BA;
+	color: #FFF;
+	-webkit-border-radius: 4px;
+	-moz-border-radius: 4px;
+	border-radius: 4px;
+	border: solid 1px #20538D;
+	text-shadow: 0 -1px 0 rgba(0, 0, 0, 0.4);
+	-webkit-box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.4), 0 1px 1px rgba(0, 0, 0, 0.2);
+	-moz-box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.4), 0 1px 1px rgba(0, 0, 0, 0.2);
+	box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.4), 0 1px 1px rgba(0, 0, 0, 0.2);
+	-webkit-transition-duration: 0.2s;
+	-moz-transition-duration: 0.2s;
+	transition-duration: 0.2s;
+	-webkit-user-select:none;
+	-moz-user-select:none;
+	-ms-user-select:none;
+	user-select:none;
+}
+.download:hover{
+	background: #356094;
+	border: solid 1px #2A4E77;
+	text-decoration: none;
+}
+.download:active{
+	-webkit-box-shadow: inset 0 1px 4px rgba(0, 0, 0, 0.6);
+	-moz-box-shadow: inset 0 1px 4px rgba(0, 0, 0, 0.6);
+	box-shadow: inset 0 1px 4px rgba(0, 0, 0, 0.6);
+	background: #2E5481;
+	border: solid 1px #203E5F;
+}
+h3{
+color: #800000;
+font-weight: bold;
+}
+h4{
+color: #000080;
+font-weight: bold;
+}
+h5{
+color: #008080;
+font-weight: bold
+}
+</style>
+
+
+## {.tabset .tabset-fade }
+
+<h3>Differential expression analysis</h3>
+
+```{r setup, echo=F}
+library(RColorBrewer)
+library(ggplot2)
+library(DESeq2)
+library(cowplot)
+library(dplyr)
+library(gprofiler2)
+```
+
+```{r fig.width=20, fig.height=5, echo=F}
+B6 <- assay(readRDS("Data/B6/salmon/salmon.merged.gene_counts.rds"))
+LCN2 <- assay(readRDS("Data/LCN2/salmon/salmon.merged.gene_counts.rds"))
+
+#LCN2 <- read.table("/nextgen/nextgen2.archive/archive/fastqs/weiskirchen/201127/001_3mRNA_Weiskirchen/fastqs/LCN2/results/star_salmon/salmon.merged.gene_counts.tsv", header=T)
+
+
+
+colors <- c("darkred", "darkblue", "red", "blue")
+names(colors) <- c("Lcn2_neg_8w_Ccl4", "B6_8w_Ccl4", "Lcn2_neg_Oil", "B6_Oil")
+
+colData <- data.frame(condition=c(rep("Lcn2_neg_8w_Ccl4",3),
+                                  rep("B6_8w_Ccl4",3),
+                                  rep("Lcn2_neg_Oil",3),
+                                  rep("B6_Oil",3)),
+                      
+                      color=    c(rep(colors[1],3),
+                                  rep(colors[2],3),
+                                  rep(colors[3],3),
+                                  rep(colors[4],3)),
+                      
+                      color.id= c(rep(1,3),
+                                  rep(2,3),
+                                  rep(3,3),
+                                  rep(4,3)))
+
+rownames(colData) <- c(paste("Lcn2_neg_8w_Ccl4_R",1:3,sep=""),
+                       paste("B6_8w_Ccl4_R",1:3,sep=""),
+                       paste("Lcn2_neg_Oil_R",1:3,sep=""),
+                       paste("B6_Oil_R",1:3,sep=""))
+
+B6$gene_id <- rownames(B6)
+LCN2$gene_id <- rownames(LCN2) 
+
+all <- merge(B6,LCN2,by="gene_id")
+for(c in 2:ncol(all)){all[,c] <- as.integer(all[,c])}
+all <- all[,1:13]
+rownames(all) <- all$gene_id
+counts   <- all[,2:(ncol(all)-1)]
+colDatas <- vector("list", 4)
+colDatas[[1]] <- colData[colData$condition %in% c("Lcn2_neg_8w_Ccl4", "B6_8w_Ccl4"),]
+colDatas[[2]] <- colData[colData$condition %in% c("Lcn2_neg_Oil", "B6_Oil"),]
+colDatas[[3]] <- colData[colData$condition %in% c("B6_Oil", "B6_8w_Ccl4"),]
+colDatas[[4]] <- colData[colData$condition %in% c("Lcn2_neg_Oil", "Lcn2_neg_8w_Ccl4"),]
+
+countDatas <- vector("list",4)
+DDS <- vector("list", 4)
+vsd <- vector("list", 4)
+DEG <- vector("list", length(pairs))
+
+references <- c("B6_8w_Ccl4","B6_Oil","B6_Oil","Lcn2_neg_Oil")
+
+for(p in 1:4){
+  colDatas[[p]]$condition <- as.factor(colDatas[[p]]$condition)
+  countDatas[[p]] <- all[,c("gene_id",rownames(colDatas[[p]]))]
+  countDatas[[p]]$gene_id <- NULL
+  DDS[[p]] <- DESeq2::DESeqDataSetFromMatrix(countData = countDatas[[p]], colData = colDatas[[p]], design = ~condition)
+  DDS[[p]]$condition <- relevel(DDS[[p]]$condition, ref = references[p])
+  DDS[[p]] <- DESeq2::DESeq(DDS[[p]], fitType="local", betaPrior = F)
+  DEG[[p]] <- DESeq2::results(DDS[[p]])
+}
+```
+
+<h4> PCA plots </h4>
+```{r fig.width=20, fig.height=5, echo=F}
+pcas <- vector("list", 4)
+dispEstsPlot <- vector("list", 4)
+for(p in 1:4){
+    vsd[[p]]  <- DESeq2::vst(DDS[[p]], fitType = "local")
+    pcas[[p]] <- DESeq2::plotPCA(vsd[[p]])
+    colDatas[[p]]$condition  <- stringr::str_trim(as.character(colDatas[[p]]$condition))
+    pcas[[p]]$data$condition <- stringr::str_trim(as.character( pcas[[p]]$data$condition))
+    colDatas[[p]]$name <- rownames(colDatas[[p]])
+    pcas[[p]]$data     <- merge(pcas[[p]]$data, colDatas[[p]], by=c("name","condition"))
+    dispEstsPlot[[p]]  <- DESeq2::plotDispEsts(DDS[[p]])
+    pcas[[p]]$data     <- as.data.frame(pcas[[p]]$data[order(pcas[[p]]$data$color.id),])
+    pcas[[p]]$data$Rep <- ifelse(endsWith(pcas[[p]]$data$name, "R1"), "R1",
+                                 ifelse(endsWith(pcas[[p]]$data$name, "R2"), "R2",
+                                        ifelse(endsWith(pcas[[p]]$data$name, "R3"), "R3", "R4")))
+    pcas[[p]] <- ggplot2::ggplot(pcas[[p]]$data , aes(x=PC1, y=PC2, color=condition, order=color.id, label=Rep)) + 
+                          geom_point(size=3) + 
+                          ggpubr::theme_pubr() + 
+                          scale_color_manual(values = setNames(pcas[[p]]$data$color, pcas[[p]]$data$condition) ) + 
+                          ggtitle(paste(unique(colDatas[[p]]$condition)[1],
+                                        " vs. ",
+                                        unique(colDatas[[p]]$condition)[2], sep="")) + 
+                          theme(plot.title = element_text(hjust = 0.5, face="bold")) + 
+                          ggrepel::geom_label_repel()
+}
+do.call("plot_grid", c(pcas, ncol=4))
+
+pdf("Images/pca.pdf", width=20, height=5)
+do.call("plot_grid", c(pcas, ncol=4))
+dev.off()
+```
+
+<h4> Sample Similarity Heat maps</h4>
+```{r fig.width=25, fig.height=5, echo=F}
+distances <- c("euclidean", "manhattan")
+grids <- vector("list", length(distances))
+for(d in 1:length(distances)){
+  hm <- vector("list", 4)
+  for(p in 1:4){
+    vsd <- vst(DDS[[p]], blind = F)
+    sampleDists <- dist(t(assay(vsd)), method = distances[d])
+    sampleDistMatrix <- as.matrix(sampleDists)
+    rownames(sampleDistMatrix) <- paste(vsd$condition, vsd$type, sep="-")
+    colnames(sampleDistMatrix) <- NULL
+    colors <- colorRampPalette( (brewer.pal(11, "RdYlBu")) )(255)
+    hm[[p]] <- pheatmap::pheatmap(sampleDistMatrix,
+             clustering_distance_rows=sampleDists, 
+             clustering_distance_cols=sampleDists, labels_row = colnames(DDS[[2]]),
+             col=colors)
+  }
+  
+  for(p in 1:4){
+    hm[[p]] <- ggplotify::as.ggplot(hm[[p]]) + 
+      ggtitle(paste(unique(colDatas[[p]]$condition)[1], " vs. ", unique(colDatas[[p]]$condition)[2], sep="")) + 
+                  theme(plot.title = element_text(hjust = 0.5, face="bold")) 
+  }
+
+  grids[[d]] <- plot_grid(hm[[1]],hm[[2]],hm[[3]],hm[[4]],rel_widths = c(1.2,1.1,1.1,1.2), ncol=4)
+}
+```
+
+<h5>Euclidean distance (Standard)</h5>
+Euclidean distance between two expression profiles.
+```{r fig.width=25, fig.height=5, echo=F}
+grids[[1]]
+
+pdf("Images/similarity.heatmaps.pdf", width=25, height=5)
+grids[[1]]
+dev.off()
+```
+<h4> MA plots </h4>
+```{r fig.width=20, fig.height=5, echo=F, warning=F}
+ma_plots <- vector("list", 4)
+
+Genes <- read.table("~/Desktop/work/RProjects/Data/GENES.gtf", sep="\t")
+Genes <- Genes[,9]
+Genes <- stringr::str_split(Genes, ";")
+Gene.Names <- vector("list", length(Genes))
+Gene.Ids <- vector("list", length(Genes))
+
+for(g in 1:length(Gene.Names)){
+  Gene.Names[[g]] <- stringr::str_trim(Genes[[g]][3])
+  Gene.Ids[[g]] <- stringr::str_trim(Genes[[g]][1])
+}
+Gene.Names <- unlist(Gene.Names)
+Gene.Names <- gsub(Gene.Names, pattern = "gene_name ", replacement = "")
+Gene.Ids <- unlist(Gene.Ids)
+Gene.Ids <- gsub(Gene.Ids, pattern = "gene_id ", replacement = "")
+names(Gene.Names) <- Gene.Ids
+
+min <- Inf
+max <- -Inf
+
+for(p in 1:4){
+  DEG[[p]] <- as.data.frame(DEG[[p]])
+  curr.min <- min((na.omit(DEG[[p]])[na.omit(DEG[[p]])$padj <=0.05,])$log2FoldChange)
+  curr.max <- max((na.omit(DEG[[p]])[na.omit(DEG[[p]])$padj <=0.05,])$log2FoldChange)
+  if(curr.min < min){min <- curr.min}
+  if(curr.max > max){max <- curr.max}
+}
+
+DEG.ext <- vector("list", 4)
+for(p in 1:4){
+  DEG.ext[[p]] <- as.data.frame(DEG[[p]])
+  DEG.ext[[p]] <- na.omit(DEG.ext[[p]])
+  DEG.ext[[p]] <-   DEG.ext[[p]][order(DEG.ext[[p]]$padj), ] 
+  DEG.ext[[p]]$symbol <- as.character(Gene.Names[rownames( DEG.ext[[p]] )])
+  #diff_express$symbol <- as.character(Gene.Names[rownames(diff_express)])
+  ma_plots[[p]] <- (ggpubr::ggmaplot(DEG.ext[[p]], alpha = 0.5, 
+                   fdr = 0.05, fc = 1.5, size = 1,
+                   palette = c("#B31B21", "#1465AC", "darkgray"),
+                   genenames = as.vector(DEG.ext[[p]]$symbol),
+                   legend = "top", top = 10, select.top.method = "padj",
+                   font.label = c("bold", 11), label.rectangle = TRUE,
+                   font.legend = "bold",
+                   font.main = "bold",
+                   ggtheme = ggplot2::theme_minimal()) + ylim(min,max)) + 
+                ggtitle(paste(unique(colDatas[[p]]$condition)[1], " vs. ", unique(colDatas[[p]]$condition)[2], sep="")) + 
+                theme(plot.title = element_text(hjust = 0.5, face="bold"))
+  
+}
+
+do.call("plot_grid", c(ma_plots, ncol=4))
+
+pdf("Images/ma.plots.pdf", width=20, height=5)
+do.call("plot_grid", c(ma_plots, ncol=4))
+dev.off()
+```
+
+MA plots for each of the comparisons. An MA-plot is a scatter plot of log2 fold changes (on the y-axis) against the average expression signal (on the x-axis). In this regard, we are using the baseMean values from the output of the DESeq package for the mean expression value and the log2 fold changes from the same output also. Each gene with absolute fold change >= 1.5 and adjusted p-value <= 0.05 are considered as significant. Blue dots refer to downregulated genes, red dots to upregulated genes and grey ones are non significant genes.
+
+ 
+```{r}
+log2(na.omit(DEG.ext[[1]][DEG.ext[[1]]$symbol=="Lcn2",])$baseMean)
+```
+
+
+## {.tabset .tabset-fade }
+
+<h4> Heatmaps </h4>
+
+```{r fig.height=12, fig.width=20}
+library(DESeq2)
+library(pheatmap)
+library(gprofiler2)
+
+top.50.var.hm <- vector("list", 4)
+Gene.Names
+for(p in 1:4){
+  gene_matrix <- DESeq2::vst(DDS[[p]], blind = F)
+  gene_matrix <- assay(gene_matrix)
+  gene_matrix <- as.data.frame(gene_matrix)
+  gene_matrix$ensembl_gene_id <- rownames(gene_matrix)
+  map <- unique(as.data.frame(Gene.Names))
+  map$ensembl_gene_id <- rownames(map)
+  colnames(map) <- c("Symbol", "ensembl_gene_id")
+  map <- unique(map)
+  gene_matrix <- unique(na.omit(merge(na.omit(gene_matrix), na.omit(map))))
+  gene_matrix$var <- matrixStats::rowVars(as.matrix(gene_matrix[,2:7]))
+  gene_matrix <- gene_matrix[order(-gene_matrix$var),]
+  hm.matrix <- gene_matrix[,c(1:(ncol(gene_matrix)-1))]
+  hm.matrix <- as.data.frame(hm.matrix)
+  hm.matrix <- hm.matrix[, 2:8]
+  hm.matrix <- hm.matrix[1:50,]
+  hm.matrix <- as.data.frame((hm.matrix))
+  rownames(hm.matrix) <- hm.matrix$Symbol
+  hm.matrix$Symbol <- NULL
+  annotation_col = data.frame(SampleType = factor(colDatas[[p]]$condition))
+  annotation_col$SampleType <- as.character(annotation_col$SampleType)
+  rownames(annotation_col) <- (colnames(as.data.frame(hm.matrix[,colDatas[[p]]$name])))
+  names <- ifelse(endsWith(rownames(annotation_col), "R1" ), "R1",
+                                     ifelse(endsWith( rownames(annotation_col), "R2" ), "R2", "R3"))
+  
+  
+#  ann_colors = list(SampleType = c(`Lcn2-Ccl4` = "darkblue", `Lcn2-Oil`="darkred"))
+  top.50.var.hm[[p]] <- pheatmap::pheatmap(hm.matrix, main = "",  color = colorRampPalette(c("darkblue", "white", "red2"))(50), 
+                     border_color = "darkgrey", cluster_rows=T, annotation_names_col = T, labels_col = names,
+                     annotation_col = annotation_col, show_rownames=T, show_colnames = T,  cluster_cols=T, 
+                     fontsize_row = 10, scale = "row") 
+}
+
+cowplot::plot_grid(ggplotify::as.ggplot(top.50.var.hm[[1]]),
+                   ggplotify::as.ggplot(top.50.var.hm[[2]]),
+                   ggplotify::as.ggplot(top.50.var.hm[[3]]),
+                   ggplotify::as.ggplot(top.50.var.hm[[4]]), 
+                   rel_widths = c(2.3,2,2,2.2),ncol=4)
+
+pdf("Images/top50.heatmaps.pdf", width=20, height=12)
+cowplot::plot_grid(ggplotify::as.ggplot(top.50.var.hm[[1]]),
+                   ggplotify::as.ggplot(top.50.var.hm[[2]]),
+                   ggplotify::as.ggplot(top.50.var.hm[[3]]),
+                   ggplotify::as.ggplot(top.50.var.hm[[4]]), 
+                   rel_widths = c(2.3,2,2,2.2),ncol=4)
+dev.off()
+```
+
+
+### Top 50 variable genes. (across types)
+```{r fig.height=10, fig.width=10}
+library(DESeq2)
+library(pheatmap)
+library(gprofiler2)
+
+cowplot::plot_grid(ggplotify::as.ggplot(top.50.var.hm[[1]]),
+                   ggplotify::as.ggplot(top.50.var.hm[[2]]), 
+                   rel_widths = c(2.2,2),ncol=2)
+
+
+pdf("Images/top50.heatmaps.knockout.to.wt.pdf", width=10, height=10)
+
+cowplot::plot_grid(ggplotify::as.ggplot(top.50.var.hm[[1]]),
+                   ggplotify::as.ggplot(top.50.var.hm[[2]]), 
+                   rel_widths = c(2.2,2),ncol=2)
+
+dev.off()
+
+```
+
+### Top 50 variable genes.(within types)
+```{r fig.height=10, fig.width=10}
+library(DESeq2)
+library(pheatmap)
+library(gprofiler2)
+
+cowplot::plot_grid(
+                   ggplotify::as.ggplot(top.50.var.hm[[3]]),
+                   ggplotify::as.ggplot(top.50.var.hm[[4]]), 
+                   rel_widths = c(1.9,2.15),ncol=2)
+
+
+pdf("Images/top50.heatmaps.wt_vs_wt_and_knockout_vs_knockout.pdf", width=10, height=10)
+
+cowplot::plot_grid(
+                   ggplotify::as.ggplot(top.50.var.hm[[3]]),
+                   ggplotify::as.ggplot(top.50.var.hm[[4]]), 
+                   rel_widths = c(1.9,2.15),ncol=2)
+
+dev.off()
+
+```
+
+### Top 50 variable genes in the top pathways
+Genes variation computed among all genes involved in the top 10 upregulated and top 10 downregulated biological
+processes from the GO database.
+
+```{r fig.height=12, fig.width=20}
+library(DESeq2)
+library(pheatmap)
+library(gprofiler2)
+
+top.50.var.hm <- vector("list", 4)
+
+#SymbolDB <- gconvert(rownames( DESeq2::vst(DDS[[p]], blind = F)), organism = "mmusculus", target = "MGI")
+selected.db = c("GO:BP","GO:CC","GO:MF")
+
+
+for(p in 1:4){
+  gene_matrix <- DESeq2::vst(DDS[[p]], blind = F)
+  gene_matrix <- assay(gene_matrix)
+  gene_matrix <- as.data.frame(gene_matrix)
+  gene_matrix$ensembl_gene_id <- rownames(gene_matrix)
+  map <- unique(as.data.frame(Gene.Names))
+  map$ensembl_gene_id <- rownames(map)
+  colnames(map) <- c("Symbol", "ensembl_gene_id")
+  map <- unique(map)
+  gene_matrix <- unique(na.omit(merge(na.omit(gene_matrix), na.omit(map))))
+  
+  gene_matrix$var <- matrixStats::rowVars(as.matrix(gene_matrix[,2:7]))
+  gene_matrix <- gene_matrix[order(-gene_matrix$var),]
+  hm.matrix <- gene_matrix[,c(1:(ncol(gene_matrix)-1))]
+  hm.matrix <- as.data.frame(hm.matrix)
+  hm.matrix <- hm.matrix[, 2:8]
+  hm.matrix <- as.data.frame((hm.matrix))
+
+  go_pair.up  <- rbind(go_tbl_c2.DT[[p]]$x$data, go_tbl_go.DT[[p]]$x$data)
+  selected.go_pair.up <- go_pair.up[go_pair.up$Database %in% selected.db,]
+  selected.go_pair.up <- selected.go_pair.up[1:10,]
+  go_pair.dn  <- rbind(go_Dn_tbl_c2.DT[[p]]$x$data, go_Dn_tbl_go.DT[[p]]$x$data)
+  selected.go_pair.dn <- go_pair.dn[go_pair.dn$Database %in% selected.db,]
+  selected.go_pair.dn <- selected.go_pair.dn[1:10,]
+  genes.dn <- unique(unlist(stringr::str_split(selected.go_pair.dn$Intersection, pattern = ",")))
+  genes.up <- unique(unlist(stringr::str_split(selected.go_pair.up$Intersection, pattern = ",")))
+    
+  hm.matrix <- hm.matrix[hm.matrix$Symbol %in% c(genes.dn, genes.up), ]
+  rownames(hm.matrix) <- hm.matrix$Symbol
+  hm.matrix$Symbol <- NULL
+  hm.matrix$input <- NULL
+  hm.matrix$var <- matrixStats::rowVars(as.matrix(hm.matrix))
+  hm.matrix <- hm.matrix[order(-hm.matrix$var),]
+  
+  hm.matrix$var <- NULL
+  hm.matrix <- na.omit(hm.matrix[1:50,])
+
+  ### B. Select genes for each GO term.
+  
+  
+  
+  annotation_col = data.frame(SampleType = factor(colDatas[[p]]$condition))
+  rownames(annotation_col) <- colnames(as.data.frame(hm.matrix[,colDatas[[p]]$name]))
+  
+  
+  names <- ifelse(endsWith(rownames(annotation_col), "R1" ), "R1",
+                                     ifelse(endsWith( rownames(annotation_col), "R2" ), "R2", "R3"))
+  
+  ann_colors = list(SampleType = c("darkblue", "darkred"))
+  names(ann_colors$SampleType) <- unique(colDatas[[p]]$condition)
+  
+  top.50.var.hm[[p]] <- pheatmap::pheatmap(hm.matrix, main = "",  color = colorRampPalette(c("darkblue", "white", "red2"))(50), 
+                     border_color = "darkgrey", cluster_rows=T, annotation_colors = ann_colors, labels_col = names,
+                     annotation_col = annotation_col, show_rownames=T, show_colnames = T,  cluster_cols=T, 
+                     fontsize_row = 10, scale = "row") 
+}
+
+cowplot::plot_grid(ggplotify::as.ggplot(top.50.var.hm[[1]]),
+                   ggplotify::as.ggplot(top.50.var.hm[[2]]),
+                   ggplotify::as.ggplot(top.50.var.hm[[3]]),
+                   ggplotify::as.ggplot(top.50.var.hm[[4]]), rel_widths = c(2.3,2,2,2.2),ncol=4)
+
+
+
+pdf("Images/top50GenesinTopPathways.pdf", width=20, height=11)
+
+cowplot::plot_grid(ggplotify::as.ggplot(top.50.var.hm[[1]]),
+                   ggplotify::as.ggplot(top.50.var.hm[[2]]),
+                   ggplotify::as.ggplot(top.50.var.hm[[3]]),
+                   ggplotify::as.ggplot(top.50.var.hm[[4]]), rel_widths = c(2.3,2,2,2.2),ncol=4)
+
+
+dev.off()
+
+```
+
+Heatmaps of the top variable genes from top enriched GO terms. First, we select the top 10 positively enriched and the top 10 negatively enriched GO terms. From these we select all genes significantly regulated as computed by the gprofiler2 (see method description) package. These genes are sortey by variance across all samples and the top 50 variable genes are selected. The underlying expression matrix is the normalized one using the variance stabilization transformation of the DESeq2 package.
+
+
+
+```{r echo=F}
+seletected.pathways <- read.table("SelectedPathways/Selected_Pathways.csv", header=T, sep="\t")
+
+```
+```{r fig.height=14, fig.width=14, echo=F}
+colors <- c("#000080","#4c3197","#795eae","#a28dc4","#c9bedb",
+               "#e3c4bc","#d29889","#bd6c5a","#a4402d","#880000",
+               "#008000","#4c973c","#78ad68","#a1c495","#c9dac2",
+               "#dcc5da","#c79ac3","#b170ac")
+
+go.heatmap <- function(go.table, DEG.Table, cond, gs_colors, vsd){
+  
+
+  curr.go.table <- go.table
+  ### Select genes from each pathway.
+  DE <- vector("list", nrow(curr.go.table))
+  lengths <- vector("list", nrow(curr.go.table))
+  curr.go.table$length <- -1
+  for(p in 1:nrow(curr.go.table)){
+     DE[[p]] <- DEG.Table
+     DE[[p]] <- DE[[p]][DE[[p]]$symbol %in% unlist(strsplit(curr.go.table[p,]$Intersection,",")), ]
+     DE[[p]] <- DE[[p]][DE[[p]]$padj <= 0.05,]
+     DE[[p]] <- DE[[p]][order(-abs(DE[[p]]$log2FoldChange)),]
+     DE[[p]] <- DE[[p]][1:5,]
+     DE[[p]]$GeneClass <- ""
+     DE[[p]] <- na.omit(DE[[p]])
+     DE[[p]]$length <- unique(nrow(DE[[p]]))
+     curr.go.table[p,]$length <- nrow(DE[[p]])
+     DE[[p]]$GeneClass <- rep(curr.go.table[p,]$GeneSetName,  DE[[p]]$length[1] )
+  }
+  DE_all <- do.call("rbind", DE)
+  DE_all <- DE_all[,c(1,8,ncol(DE_all)-1,ncol(DE_all))]
+  DE_all <- DE_all[order(DE_all$GeneClass),]
+  ### Reduce count matrix to selected genes.
+  gene_matrix <- as.data.frame(vsd)
+  hm.gex.matrix <- gene_matrix
+  hm.gex.matrix$ensembl_gene_id <-rownames(hm.gex.matrix)
+  hm.gex.matrix <- merge(hm.gex.matrix, DE_all, by="ensembl_gene_id")
+  hm.gex.matrix <- hm.gex.matrix[order(hm.gex.matrix$GeneClass),]
+
+
+  ### Annotate columns of the heatmap.
+  annotation_col = data.frame(SampleType = factor(c(rep(cond[1],3), rep(cond[2],3))))
+  rownames(annotation_col) <- colnames(hm.gex.matrix[,2:7])
+
+  ### Annotate rows of the heatmap.
+  annotation_row <- data.frame(GeneClass = factor(rep(curr.go.table$GeneSetName, unlist(curr.go.table$length))))
+  annotation_row$GeneClass <- factor(annotation_row$GeneClass, levels = unique(hm.gex.matrix$GeneClass))
+  annotation_row <- annotation_row[order((annotation_row$GeneClass)), , drop=F]
+  rownames(annotation_row) <- 1:nrow(annotation_row)
+  
+  ### select colors for row annotation
+  
+  names(gs_colors) <- unique(hm.gex.matrix$GeneClass)
+  ann_colors = list(SampleType = c("darkgreen","red"),GeneClass=gs_colors)
+  names(ann_colors$SampleType) <- cond
+#  names(ann_colors$GeneClass) <- unique(annotation_row$GeneClass)
+
+  lengths <- unlist(lengths)
+  gaps <- vector("list", length(lengths))
+  curr.go.table <- curr.go.table[order(curr.go.table$GeneSetName),]
+  gaps[[1]] <- curr.go.table[1,]$length 
+  for(l in 2:nrow(curr.go.table)){ gaps[[l]] <- curr.go.table[l,]$length + gaps[[l-1]] }
+  gaps <- unlist(gaps)
+
+  names <- ifelse(endsWith(rownames(annotation_col), "R1"), "R1",
+                  ifelse(endsWith(rownames(annotation_col), "R2"), "R2", "R3"))
+  matrix <- hm.gex.matrix[,2:7]
+  rownames(matrix) <- 1:nrow(annotation_row)
+  chm <- ComplexHeatmap::pheatmap(as.matrix(matrix), 
+                                  annotation_col = annotation_col, 
+                                  annotation_row = annotation_row, 
+                                  annotation_colors = ann_colors,  
+                                  labels_row = hm.gex.matrix$symbol,
+                                  labels_col = names,  gaps_row = gaps, scale="row",
+                                  legend = F, annotation_names_row = T,
+                                  row_names_side="left", border_color = "lightgrey", 
+                                  cluster_rows = F, cluster_cols = T, 
+                                  color = colorRampPalette(c("darkblue", "white", "red2"))(50))
+library(ComplexHeatmap)
+  ha = HeatmapAnnotation(
+      empty = anno_empty(border = FALSE, 
+                         height = unit(4, "mm")),
+                         foo = anno_block(gp = gpar(fill = 2:6),labels = c("Lcn2_neg_8w_Ccl4", "B6_8w_Ccl4"))
+  )
+
+  chm@left_annotation@anno_list$GeneClass@legend_param <- 
+    list(labels_gp = gpar(fontsize = 10), plot = F, title = "GO pathways", nrow = NULL,  ncol = 1,
+         title_gp = gpar(fontsize = 10, fontface = "bold"), title_position = "topleft", color_bar = c("discrete"), 
+         grid_height = unit(4, "mm"), grid_width = unit(4, "mm"), grid_border = NULL, labels_gp = gpar(fontsize = 10), 
+         row_gap = unit(18, "mm"),  legend_height = NULL, legend_width = NULL, legend_direction = c("horizontal"))
+
+
+# + ggtitle("RNA-Seq: [24h vs. 0h] - TOP GENES IN SELECTED PATHWAYS")
+
+  gex.go.heatmap.1 <- ggplotify::as.ggplot(chm) + theme(plot.title = element_text(size=12, face = "bold", colour = "#000080", hjust=0.5))
+return(gex.go.heatmap.1)
+  }
+
+
+```
+
+
+
+
+```{r fig.height=14, fig.width=13, echo=F}
+go.table = seletected.pathways[seletected.pathways$Treatment=="Oil" & seletected.pathways$Regulation =="Up", ]
+cond <- c("Lcn2_neg_Oil","B6_Oil")
+#cond <- c("Lcn2_neg_Oil", "B6_Oil")
+vsd <- assay(vst(DDS[[2]], blind = F))
+gs_colors <- c("#000080","#4c3197","#795eae","#a28dc4","#c9bedb", "#e3c4bc")
+              
+DEG.Table <- dt.de.table[[2]]$x$data
+
+oil.heatmap.up <- go.heatmap(go.table = go.table, DEG.Table = dt.de.table[[2]]$x$data, cond=cond, gs_colors = gs_colors, vsd =vsd )
+
+go.table = seletected.pathways[seletected.pathways$Treatment=="Oil" & seletected.pathways$Regulation !="Up", ]
+cond <- c("Lcn2_neg_Oil","B6_Oil")
+#cond <- c("Lcn2_neg_Oil", "B6_Oil")
+vsd <- assay(vst(DDS[[2]], blind = F))
+gs_colors <- c(
+               "#d29889","#bd6c5a","#a4402d","#880000",
+               "#008000","#4c973c","#78ad68","#a1c495","#c9dac2",
+               "#dcc5da","#c79ac3","#b170ac")
+DEG.Table <- dt.de.table[[2]]$x$data
+
+oil.heatmap.dn <- go.heatmap(go.table = go.table, DEG.Table = dt.de.table[[2]]$x$data, cond=cond, gs_colors = gs_colors, vsd =vsd )
+
+
+go.table = seletected.pathways[seletected.pathways$Treatment!="Oil", ]
+cond <- c("Lcn2_neg_ccl4","B6_ccl4")
+#cond <- c("Lcn2_neg_Oil", "B6_Oil")
+vsd <- assay(vst(DDS[[1]], blind = F))
+
+gs_colors <- c("#ff8800","#ff9d45","#ffb271","#ffc79b","#fcdcc5",
+               "#cadcc3","#a2c796")
+DEG.Table <- dt.de.table[[1]]$x$data
+
+ccl4.heatmap <- go.heatmap(go.table = go.table, DEG.Table = dt.de.table[[1]]$x$data, cond=cond, gs_colors = gs_colors, vsd =vsd )
+
+
+
+plot_grid(plot_grid(ccl4.heatmap + ggtitle("CCL4"),oil.heatmap.up  + ggtitle("Oil (Upregulated)"),ncol=1, rel_heights = c(9/18,9/18)), oil.heatmap.dn  + ggtitle("Oil (Downregulated)"), rel_widths=c(1,1.1),ncol=2)
+
+pdf(file="Images/go.genes.heatmaps.OrderedByL2FC.pdf", height=14, width=13)
+plot_grid(plot_grid(ccl4.heatmap + ggtitle("CCL4"),oil.heatmap.up  + ggtitle("Oil (Upregulated)"),ncol=1, rel_heights = c(9/18,9/18)), oil.heatmap.dn  + ggtitle("Oil (Downregulated)"), rel_widths=c(1,1.1),ncol=2)
+dev.off()
+```
+
+
+
+
+
+## {.tabset .tabset-fade }
+
+<h4> Diff. Expr. Tables </h4>
+
+```{r echo=F}
+### The normalized count values.
+tpm.data <- vector("list", 4)
+for(p in 1:4){
+    tpm.data[[p]] <- as.data.frame(edgeR::cpm.default(countDatas[[p]], log = F, prior.count = 1))
+    colnames(tpm.data[[p]]) <- paste("CPM (",   colnames(tpm.data[[p]]) ,")" ,sep="")
+    DEG.ext[[p]]$ensembl_gene_id <- rownames(DEG.ext[[p]])
+    tpm.data[[p]]$ensembl_gene_id <- rownames(tpm.data[[p]])
+    DEG.ext[[p]] <- merge(DEG.ext[[p]], tpm.data[[p]], by="ensembl_gene_id")
+}
+norm.type <- "CPM"
+dt.de.table <- vector("list", 4)
+for(p in 1:4){
+
+  table_name <- paste("DEA_",unique(colDatas[[p]]$condition)[1], "_vs_", unique(colDatas[[p]]$condition)[2], sep="")
+  Table_title <-  paste("Differential expression analysis: ",unique(colDatas[[p]]$condition)[1], " vs ", unique(colDatas[[p]]$condition)[2], sep="")
+  dt.de.table[[p]] <-  DT::datatable(DEG.ext[[p]], rownames = FALSE, filter = 'top', 
+                                       caption = Table_title, extensions = 'Buttons',
+                                       options = list(dom = 'Bfrtip', scrollX=T,                                                                                                                          
+                                       buttons = list(list(extend='csv', title=table_name), 
+                                                      list(extend='excel', filename=table_name),    
+                                                      list(extend='pdf', filename=table_name)), 
+                                       autoWidth = TRUE, pageLength = 10, 
+                                       columnDefs = list(list(className = 'dt-left'))))
+}
+```
+
+
+### Lcn2_neg_8w_Ccl4 vs. B6_8w_Ccl4
+```{r echo=F, warning=F}
+ dt.de.table[[1]]
+```
+
+### Lcn2_neg_Oil vs. B6_Oil
+```{r echo=F, warning=F}
+ dt.de.table[[2]]
+```
+
+### B6_8w_Ccl4 vs. B6_Oil
+```{r echo=F, warning=F}
+ dt.de.table[[3]]
+
+```
+
+### Lcn2_neg_8w_Ccl4 vs. Lcn2_neg_Oil
+```{r echo=F, warning=F}
+ dt.de.table[[4]]
+
+```
+
+
+
+
+## {.tabset .tabset-fade }
+
+<h3><b>Functional Analysis</b></h3>
+
+```{r echo=F}
+pairs <- list(c("Lcn2_neg_8w_Ccl4", "B6_8w_Ccl4"),
+              c("Lcn2_neg_Oil", "B6_Oil"),
+              c("B6_8w_Ccl4", "B6_8w_Ccl4"),
+              c("Lcn2_neg_8w_Ccl4", "Lcn2_neg_Oil"))
+
+customDB.curated <- gprofiler2::upload_GMT_file(gmtfile = "../../work/RProjects/scBreastCancer/Data/c2.cp.v7.1.symbols.gmt")
+DEG.up <- vector("list",length(pairs))
+Genes.up <- vector("list",length(pairs))
+DEG.dn <- vector("list",length(pairs))
+Genes.dn <- vector("list",length(pairs))
+
+norm_counts_cutoff <- 1
+
+samples <- colnames(all[,-1])                     
+samples <- samples[!samples %in% c("Lcn2_neg_8w_Ccl4_R3", "B6_8w_Ccl4_R1")]
+for(p in 1:length(pairs)){
+  
+  table <- DEG.ext[[p]]
+  table$`Symbol (HGNC)` <- table$symbol
+  left_samples <- samples[grepl(paste(paste("(",pairs[[p]][1],")",sep=""),collapse="|"), x = samples)]
+  right_samples <- samples[grepl(paste(paste("(",pairs[[p]][2],")",sep=""),collapse="|"), x = samples)]
+  table <- subset(table,  apply(table[, paste("CPM (",left_samples,")" ,sep="")], 1, FUN=min) > norm_counts_cutoff |
+                          apply(table[, paste("CPM (",right_samples,")",sep="")], 1, FUN=min) > norm_counts_cutoff)
+  DEG.up[[p]] <- table
+  DEG.up[[p]] <- na.omit(DEG.up[[p]])
+  DEG.up[[p]] <- DEG.up[[p]][DEG.up[[p]]$log2FoldChange >= .56 & DEG.up[[p]]$padj <= 0.05,]
+  DEG.up[[p]] <- DEG.up[[p]][order(DEG.up[[p]]$padj),]
+  DEG.up[[p]]$`Symbol (HGNC)` <- ifelse(DEG.up[[p]]$`Symbol (HGNC)`=="nan", DEG.up[[p]]$ensembl_gene_id, DEG.up[[p]]$`Symbol (HGNC)`)
+  
+  DEG.dn[[p]] <- table
+  DEG.dn[[p]] <- na.omit(DEG.dn[[p]])
+  DEG.dn[[p]] <- DEG.dn[[p]][DEG.dn[[p]]$log2FoldChange <= -.56 & DEG.dn[[p]]$padj <= 0.05,]
+  DEG.dn[[p]] <- DEG.dn[[p]][order(DEG.dn[[p]]$padj),]
+  DEG.dn[[p]]$`Symbol (HGNC)` <- ifelse(DEG.dn[[p]]$`Symbol (HGNC)`=="nan", DEG.dn[[p]]$ensembl_gene_id, DEG.dn[[p]]$`Symbol (HGNC)`)
+}
+```
+
+
+## {.tabset .tabset-fade }
+
+<h4>Upregulated functional terms</h4>
+
+<h5>Curated DB C2 from MSigDB</h5>
+
+```{r echo=F}
+### Define Comparisons/Contrasts.
+library(dplyr)
+library(stringr)
+library(tidyr)
+
+go_c2 <- vector("list", length(pairs))
+mp_c2 <- vector("list", length(pairs)) 
+go_tbl_c2 <- vector("list", length(pairs))
+go_tbl_c2.DT <- vector("list", length(pairs))
+
+for(p in 1:length(pairs)){
+  go_c2[[p]] <- gprofiler2::gost(query = DEG.up[[p]]$`Symbol (HGNC)`, 
+                  organism = customDB.curated, ordered_query = T, 
+                  multi_query = FALSE, significant = TRUE, exclude_iea = FALSE, 
+                  measure_underrepresentation = FALSE, evcodes = T, 
+                  user_threshold = 0.05, correction_method = "fdr", 
+                  domain_scope = "annotated", custom_bg = NULL, 
+                  numeric_ns = "", as_short_link = F)
+  
+  mp_c2[[p]] <- gprofiler2::gostplot(go_c2[[p]], capped = T, interactive = T) %>% plotly::layout(title=paste(pairs[[p]][1]," vs. ",pairs[[p]][2], sep=""))
+  mp_c2[[p]]$width = 1200
+  mp_c2[[p]]$height = 600
+  mp_c2[[p]]$x$layout$annotations[[2]]$text <- ""
+  
+  go_tbl_c2[[p]] <- go_c2[[p]]$result
+  go_tbl_c2[[p]] <- go_tbl_c2[[p]][, c("term_name", "source", "p_value", "precision", "recall", "term_size", "intersection_size", "query_size", "intersection")]
+  colnames(go_tbl_c2[[p]]) <- c("GeneSetName", "Database", "P_value", "Precision", "Recall", "GeneSetSize", "QuerySize", "IntersectionSize", "Intersection")
+  table_name <- paste("enriched_gene_sets_", paste(pairs[[p]][1]," vs. ",pairs[[p]][2], sep=""), sep="")
+  go_tbl_c2.DT[[p]] <- DT::datatable(as.data.frame(go_tbl_c2[[p]]), rownames = FALSE, filter = 'top', 
+                              caption = paste('Table of enrichted MSigDB curated gene sets (c2.all.v7.2.symbols.gmt) - ', paste(pairs[[p]][1]," vs. ",pairs[[p]][2], sep=""), sep=""), extensions = 'Buttons', 
+                                       options = list(dom = 'Bfrtip',        scrollX=T,                                                                                                                                  
+                                                      buttons =     
+                                                        list(list(extend='copy', title= table_name),        
+                                                             list(extend='csv', title=table_name),    
+                                                             list(extend='excel', filename=table_name),    
+                                                             list(extend='pdf', filename=table_name),  
+                                                             list(extend='print', filename=table_name)), 
+                                                      autoWidth = TRUE, pageLength = 10, columnDefs = list(list(className = 'dt-left'))))
+}
+```
+
+<h6> Table of positively enrichted C2 terms </h6>
+
+### Lcn2_neg_8w_Ccl4 vs. B6_8w_Ccl4
+```{r echo=F}
+ go_tbl_c2.DT[[1]] 
+```
+
+### Lcn2_neg_Oil vs. B6_Oil
+```{r echo=F}
+ go_tbl_c2.DT[[2]] 
+```
+
+### B6_8w_Ccl4 vs. B6_Oil
+```{r echo=F}
+ go_tbl_c2.DT[[3]] 
+```
+
+### Lcn2_neg_8w_Ccl4 vs. Lcn2_neg_Oil
+```{r echo=F}
+ go_tbl_c2.DT[[4]] 
+```
+
+
+## {.tabset .tabset-fade }
+<h6> Manhattan plots of positively enrichted GO terms </h6>
+
+### Lcn2_neg_8w_Ccl4 vs. B6_8w_Ccl4
+```{r echo=F}
+mp_c2[[1]]
+```
+
+### Lcn2_neg_Oil vs. B6_Oil
+```{r echo=F}
+mp_c2[[2]]
+```
+
+### B6_8w_Ccl4 vs. B6_Oil
+```{r echo=F}
+mp_c2[[3]]
+```
+
+### Lcn2_neg_8w_Ccl4 vs. Lcn2_neg_Oil
+```{r echo=F}
+mp_c2[[4]]
+```
+
+
+## {.tabset .tabset-fade }
+
+<h5>GO and KEGG enrichment</h5>
+
+```{r echo=F}
+library(dplyr)
+library(plotly)
+
+go_go <- vector("list", length(pairs))
+mp_go <- vector("list", length(pairs)) 
+go_tbl_go <- vector("list", length(pairs))
+go_tbl_go.DT <- vector("list", length(pairs))
+
+for(p in 1:length(pairs)){
+  go_go[[p]] <- gprofiler2::gost( query =  DEG.up[[p]]$`Symbol (HGNC)`, 
+                            organism = "hsapiens", ordered_query = T, 
+                            multi_query = FALSE, significant = TRUE, exclude_iea = FALSE, 
+                            measure_underrepresentation = FALSE, evcodes = T, 
+                            user_threshold = 0.05, correction_method = "g_SCS", 
+                            domain_scope = "annotated", custom_bg = NULL, 
+                            numeric_ns = "",sources = c("GO:MF","GO:BP","GO:CC", "KEGG"),  as_short_link = FALSE)
+  
+  mp_go[[p]] <- gprofiler2::gostplot(go_go[[p]], capped = T, interactive = T) %>% plotly::layout(title=paste(pairs[[p]][1]," vs. ",pairs[[p]][2], sep=""))
+  mp_go[[p]]$width = 1200
+  mp_go[[p]]$height = 600
+  mp_go[[p]]$x$layout$annotations[[2]]$text <- ""
+  
+  go_tbl_go[[p]] <- go_go[[p]]$result
+  go_tbl_go[[p]] <- go_tbl_go[[p]][, c("term_name", "source", "p_value", "precision", "recall", "term_size", "intersection_size", "query_size", "intersection")]
+  colnames(go_tbl_go[[p]]) <- c("GeneSetName", "Database", "P_value", "Precision", "Recall", "GeneSetSize", "QuerySize", "IntersectionSize", "Intersection")
+  table_name <- paste("enriched_gene_sets_", paste(pairs[[p]][1]," vs. ",pairs[[p]][2], sep=""), sep="")
+  go_tbl_go.DT[[p]] <- DT::datatable(as.data.frame(go_tbl_go[[p]]), rownames = FALSE, filter = 'top', 
+                              caption = paste('Table of enrichted MSigDB curated gene sets (GO terms and pathways) - ', paste(pairs[[p]][1]," vs. ",pairs[[p]][2], sep=""), sep=""), extensions = 'Buttons', 
+                                       options = list(dom = 'Bfrtip',      scrollX=T,                                                                                                                                    
+                                                      buttons =     
+                                                        list(list(extend='copy', title= table_name),        
+                                                             list(extend='csv', title=table_name),    
+                                                             list(extend='excel', filename=table_name),    
+                                                             list(extend='pdf', filename=table_name),  
+                                                             list(extend='print', filename=table_name)), 
+                                                      autoWidth = TRUE, pageLength = 10, columnDefs = list(list(className = 'dt-left'))))
+}
+
+
+```
+
+<h6> Table of positively enrichted GO terms </h6>
+
+### Lcn2_neg_8w_Ccl4 vs. B6_8w_Ccl4
+```{r echo=F}
+go_tbl_go.DT[[1]]
+```
+
+### Lcn2_neg_Oil vs. B6_Oil
+```{r echo=F}
+go_tbl_go.DT[[2]]
+```
+
+### B6_8w_Ccl4 vs. B6_Oil
+```{r echo=F}
+go_tbl_go.DT[[3]]
+```
+
+### Lcn2_neg_8w_Ccl4 vs. Lcn2_neg_Oil
+```{r echo=F}
+go_tbl_go.DT[[4]]
+```
+
+## {.tabset .tabset-fade }
+
+<h6> Manhattan plots of positively enrichted GO terms </h6>
+
+### Lcn2_neg_8w_Ccl4 vs. B6_8w_Ccl4
+```{r echo=F}
+mp_go[[1]]
+```
+
+### Lcn2_neg_Oil vs. B6_Oil
+```{r echo=F}
+mp_go[[2]]
+```
+
+### B6_8w_Ccl4 vs. B6_Oil
+```{r echo=F}
+mp_go[[3]]
+```
+
+### Lcn2_neg_8w_Ccl4 vs. Lcn2_neg_Oil
+```{r echo=F}
+mp_go[[4]]
+```
+
+## {.tabset .tabset-fade }
+
+<h4>Downregulated functional terms</h4>
+
+<h5>Curated DB C2 from MSigDB</h5>
+
+```{r echo=F}
+go_Dn_c2 <- vector("list", length(pairs))
+mp_c2 <- vector("list", length(pairs)) 
+go_Dn_tbl_c2 <- vector("list", length(pairs))
+go_Dn_tbl_c2.DT <- vector("list", length(pairs))
+
+for(p in 1:length(pairs)){
+  
+  
+  tmp <- gprofiler2::gost(query = DEG.dn[[p]]$`Symbol (HGNC)`, 
+                  organism = customDB.curated, ordered_query = T, 
+                  multi_query = FALSE, significant = TRUE, exclude_iea = FALSE, 
+                  measure_underrepresentation = FALSE, evcodes = T, 
+                  user_threshold = 0.05, correction_method = "fdr", 
+                  domain_scope = "annotated", custom_bg = NULL, 
+                  numeric_ns = "", as_short_link = F)
+  
+  if(!is.null(tmp)>0){
+    go_Dn_c2[[p]] <- tmp
+  
+  mp_c2[[p]] <- gprofiler2::gostplot(go_Dn_c2[[p]], capped = T, interactive = T) %>% plotly::layout(title=paste(pairs[[p]][1]," vs. ",pairs[[p]][2], sep=""))
+  mp_c2[[p]]$width = 1200
+  mp_c2[[p]]$height = 600
+  mp_c2[[p]]$x$layout$annotations[[2]]$text <- ""
+  
+  go_Dn_tbl_c2[[p]] <- go_Dn_c2[[p]]$result
+  go_Dn_tbl_c2[[p]] <- go_Dn_tbl_c2[[p]][, c("term_name", "source", "p_value", "precision", "recall", "term_size", "intersection_size", "query_size", "intersection")]
+  colnames(go_Dn_tbl_c2[[p]]) <- c("GeneSetName", "Database", "P_value", "Precision", "Recall", "GeneSetSize", "QuerySize", "IntersectionSize", "Intersection")
+  table_name <- paste("enriched_gene_sets_", paste(pairs[[p]][1]," vs. ",pairs[[p]][2], sep=""), sep="")
+  go_Dn_tbl_c2.DT[[p]] <- DT::datatable(as.data.frame(go_Dn_tbl_c2[[p]]), rownames = FALSE, filter = 'top', 
+                              caption = paste('Table of enrichted MSigDB curated gene sets (c2.all.v7.2.symbols.gmt) - ', paste(pairs[[p]][1]," vs. ",pairs[[p]][2], sep=""), sep=""), extensions = 'Buttons', 
+                                       options = list(dom = 'Bfrtip',       scrollX=T,                                                                                                                                   
+                                                      buttons =     
+                                                        list(list(extend='copy', title= table_name),        
+                                                             list(extend='csv', title=table_name),    
+                                                             list(extend='excel', filename=table_name),    
+                                                             list(extend='pdf', filename=table_name),  
+                                                             list(extend='print', filename=table_name)), 
+                                                      autoWidth = TRUE, pageLength = 10, columnDefs = list(list(className = 'dt-left'))))
+  }
+}
+```
+
+
+## {.tabset .tabset-fade }
+
+<h6> Table of negatively enriched C2 terms </h6>
+
+
+### Lcn2_neg_8w_Ccl4 vs. B6_8w_Ccl4
+```{r echo=F}
+ go_Dn_tbl_c2.DT[[1]] 
+```
+
+### Lcn2_neg_Oil vs. B6_Oil
+```{r echo=F}
+ go_Dn_tbl_c2.DT[[2]] 
+```
+
+### B6_8w_Ccl4 vs. B6_Oil
+```{r echo=F}
+ go_Dn_tbl_c2.DT[[3]] 
+```
+
+### Lcn2_neg_8w_Ccl4 vs. Lcn2_neg_Oil
+```{r echo=F}
+ go_Dn_tbl_c2.DT[[4]] 
+```
+
+
+## {.tabset .tabset-fade }
+<h6> Manhattan plots of negatively enrichted GO terms </h6>
+
+### Lcn2_neg_8w_Ccl4 vs. B6_8w_Ccl4
+```{r echo=F}
+mp_c2[[1]]
+```
+
+### Lcn2_neg_Oil vs. B6_Oil
+```{r echo=F}
+mp_c2[[2]]
+```
+
+### B6_8w_Ccl4 vs. B6_Oil
+```{r echo=F}
+mp_c2[[3]]
+```
+
+### Lcn2_neg_8w_Ccl4 vs. Lcn2_neg_Oil
+```{r echo=F}
+mp_c2[[4]]
+```
+
+
+## {.tabset .tabset-fade }
+
+<h5>GO and KEGG enrichment</h5>
+
+```{r echo=F}
+library(dplyr)
+library(plotly)
+
+go_Dn_go <- vector("list", length(pairs))
+mp_go <- vector("list", length(pairs)) 
+go_Dn_tbl_go <- vector("list", length(pairs))
+go_Dn_tbl_go.DT <- vector("list", length(pairs))
+
+for(p in 1:length(pairs)){
+  go_Dn_go[[p]] <- gprofiler2::gost( query =  DEG.dn[[p]]$`Symbol (HGNC)`, 
+                            organism = "hsapiens", ordered_query = T, 
+                            multi_query = FALSE, significant = TRUE, exclude_iea = FALSE, 
+                            measure_underrepresentation = FALSE, evcodes = T, 
+                            user_threshold = 0.05, correction_method = "g_SCS", 
+                            domain_scope = "annotated", custom_bg = NULL, 
+                            numeric_ns = "", sources = c("GO:MF","GO:BP","GO:CC", "KEGG"), as_short_link = FALSE)
+  
+  mp_go[[p]] <- gprofiler2::gostplot(go_Dn_go[[p]], capped = T, interactive = T) %>% plotly::layout(title=paste(pairs[[p]][1]," vs. ",pairs[[p]][2], sep=""))
+  mp_go[[p]]$width = 1200
+  mp_go[[p]]$height = 600
+  mp_go[[p]]$x$layout$annotations[[2]]$text <- ""
+  
+  go_Dn_tbl_go[[p]] <- go_Dn_go[[p]]$result
+  go_Dn_tbl_go[[p]] <- go_Dn_tbl_go[[p]][, c("term_name", "source", "p_value", "precision", "recall", "term_size", "intersection_size", "query_size", "intersection")]
+  colnames(go_Dn_tbl_go[[p]]) <- c("GeneSetName", "Database", "P_value", "Precision", "Recall", "GeneSetSize", "QuerySize", "IntersectionSize", "Intersection")
+  table_name <- paste("enriched_gene_sets_", paste(pairs[[p]][1]," vs. ",pairs[[p]][2], sep=""), sep="")
+  go_Dn_tbl_go.DT[[p]] <- DT::datatable(as.data.frame(go_Dn_tbl_go[[p]]), rownames = FALSE, filter = 'top', 
+                              caption = paste('Table of enrichted MSigDB curated gene sets (GO terms and pathways) - ', paste(pairs[[p]][1]," vs. ",pairs[[p]][2], sep=""), sep=""), extensions = 'Buttons', 
+                                       options = list(dom = 'Bfrtip', scrollX=T,                                                                                                                                         
+                                                      buttons =     
+                                                        list(list(extend='copy', title= table_name),        
+                                                             list(extend='csv', title=table_name),    
+                                                             list(extend='excel', filename=table_name),    
+                                                             list(extend='pdf', filename=table_name),  
+                                                             list(extend='print', filename=table_name)), 
+                                                      autoWidth = TRUE, pageLength = 10, columnDefs = list(list(className = 'dt-left'))))
+}
+
+
+```
+
+
+<h6> Table of negatively enrichted GO terms </h6>
+
+
+### Lcn2_neg_8w_Ccl4 vs. B6_8w_Ccl4
+```{r echo=F}
+go_Dn_tbl_go.DT[[1]]
+```
+
+### Lcn2_neg_Oil vs. B6_Oil
+```{r echo=F}
+go_Dn_tbl_go.DT[[2]]
+```
+
+### B6_8w_Ccl4 vs. B6_Oil
+```{r echo=F}
+go_Dn_tbl_go.DT[[3]]
+```
+
+### Lcn2_neg_8w_Ccl4 vs. Lcn2_neg_Oil
+```{r echo=F}
+go_Dn_tbl_go.DT[[4]]
+```
+
+
+
+## {.tabset .tabset-fade }
+
+<h6> Manhattan plots of negatively enrichted GO terms </h6>
+
+
+### Lcn2_neg_8w_Ccl4 vs. B6_8w_Ccl4
+```{r echo=F}
+mp_go[[1]]
+```
+
+### Lcn2_neg_Oil vs. B6_Oil
+```{r echo=F}
+mp_go[[2]]
+```
+
+### B6_8w_Ccl4 vs. B6_Oil
+```{r echo=F}
+mp_go[[3]]
+```
+
+### Lcn2_neg_8w_Ccl4 vs. Lcn2_neg_Oil
+```{r echo=F}
+mp_go[[4]]
+```
+
+```{r}
+sessionInfo()
+```
